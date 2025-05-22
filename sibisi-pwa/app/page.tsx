@@ -6,14 +6,68 @@ import {
   FilesetResolver,
   GestureRecognizer,
 } from "@mediapipe/tasks-vision";
+import * as tf from '@tensorflow/tfjs';
+import '@tensorflow/tfjs-backend-webgl';
+
+const MODEL_PREFIX = "indexeddb://gesture-model/";
+
+const createLSTMModel = () => {
+  const model = tf.sequential();
+  model.add(tf.layers.lstm({ inputShape: [10, 63], units: 64 }));
+  model.add(tf.layers.dense({ units: 32, activation: 'relu' }));
+  model.add(tf.layers.dense({ units: 10, activation: 'softmax' }));
+
+  model.compile({
+    optimizer: tf.train.adam(),
+    loss: 'categoricalCrossentropy',
+    metrics: ['accuracy'],
+  });
+
+  return model;
+};
+
+const preprocessFramesForLSTM = (
+  frames: Frame[],
+  sequenceLength: number,
+  labelIndex: number
+): { xs: tf.Tensor3D; ys: tf.Tensor2D } => {
+  const sequences: number[][][] = [];
+  const labels: number[] = [];
+
+  for (let i = 0; i <= frames.length - sequenceLength; i++) {
+    const seq = frames.slice(i, i + sequenceLength).map(frame => {
+      const hand = frame.landmarks[0]; // only use first hand
+      return hand.flatMap(p => [p.x, p.y, p.z]);
+    });
+
+    if (seq.length === sequenceLength) {
+      sequences.push(seq);
+      labels.push(labelIndex);
+    }
+  }
+
+  const xs = tf.tensor3d(sequences); // shape: [numSamples, 10, 63]
+  const oneHot = tf.oneHot(tf.tensor1d(labels, 'int32'), 10);
+  const ys = oneHot as tf.Tensor2D; // ✅ Type assertion to Tensor2D
+
+  return { xs, ys };
+};
+
+type Frame = {
+  image: string; // base64 PNG
+  landmarks: Array<Array<{ x: number; y: number; z: number }>>; // array of landmarks per hand
+};
 
 export default function GestureBox() {
   const [countdown, setCountdown] = useState<number | null>(null);
   const [currentSlide, setCurrentSlide] = useState(0);
   const [isRecording, setIsRecording] = useState(false);
   const [modelLoaded, setModelLoaded] = useState(false);
-  const [recordedFrames, setRecordedFrames] = useState<string[]>([]);
+  const [recordedFrames, setRecordedFrames] = useState<Frame[]>([]);
   const [selectedFrames, setSelectedFrames] = useState<Set<number>>(new Set());
+  const [modelNames, setModelNames] = useState<string[]>([]);
+  const [selectedModelName, setSelectedModelName] = useState<string | null>(null);
+  const [tfModel, setTfModel] = useState<tf.LayersModel | null>(null);
 
   const framesPerSlide = 5;
   const totalSlides = Math.ceil(recordedFrames.length / framesPerSlide);
@@ -22,6 +76,7 @@ export default function GestureBox() {
   const lastScrollY = useRef(0);
   const slideRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const currentLandmarks = useRef<Array<Array<{ x: number; y: number; z: number }>>>([]);
 
   const BOX_WIDTH = 640;
   const BOX_HEIGHT = 480;
@@ -73,8 +128,9 @@ export default function GestureBox() {
       const result = gestureRecognizer.recognizeForVideo(video, performance.now());
 
       ctx.drawImage(video, 0, 0, BOX_WIDTH, BOX_HEIGHT);
+      currentLandmarks.current = result.landmarks.length > 0 ? result.landmarks : [];
 
-      if (result.landmarks) {
+      if (result.landmarks.length != 0) {
         result.landmarks.forEach((landmarks, handIndex) => {
           const drawingUtils = new DrawingUtils(ctx);
           drawingUtils.drawConnectors(
@@ -102,11 +158,13 @@ export default function GestureBox() {
 
     const captureInterval = 100;
     const duration = 5000;
-    const frames: string[] = [];
+    const frames: Frame[] = [];
 
     const capture = () => {
-      const frame = canvasRef.current!.toDataURL("image/png");
-      frames.push(frame);
+      if (currentLandmarks.current.length == 0) return
+      const image = canvasRef.current!.toDataURL("image/png");
+      const landmarks = currentLandmarks.current;
+      frames.push({ image, landmarks });
     };
 
     const intervalId = setInterval(capture, captureInterval);
@@ -165,14 +223,91 @@ export default function GestureBox() {
     return () => clearTimeout(timeout);
   }, [currentSlide]);
 
+  useEffect(() => {
+    const loadModelList = async () => {
+      const models = await tf.io.listModels();
+
+      const names = Object.keys(models)
+        .filter(k => k.startsWith(MODEL_PREFIX))
+        .map(k => k.replace(MODEL_PREFIX, ""));
+
+      setModelNames(names);
+      if (names.length > 0 && !selectedModelName) {
+        setSelectedModelName(names[0]);
+      }
+    };
+
+    loadModelList();
+  }, []);
+
+  useEffect(() => {
+    const loadSelectedModel = async () => {
+      if (selectedModelName) {
+        try {
+          const model = await tf.loadLayersModel(`${MODEL_PREFIX}${selectedModelName}`);
+          setTfModel(model);
+        } catch (e) {
+          console.error("Failed to load model:", e);
+        }
+      }
+    };
+    loadSelectedModel();
+  }, [selectedModelName]);
+
+
+  const handleCreateModel = async () => {
+    const name = prompt("Enter model name:");
+    if (!name) return;
+
+    const model = createLSTMModel();
+    await saveModelToIndexedDB(model, name);
+
+    const updatedModels = await tf.io.listModels();
+    const updatedNames = Object.keys(updatedModels)
+      .filter(k => k.startsWith(MODEL_PREFIX))
+      .map(k => k.replace(MODEL_PREFIX, ""));
+
+    setModelNames(updatedNames);
+    setSelectedModelName(name);
+  };
+
+
+
+  const saveModelToIndexedDB = async (model: tf.LayersModel, name: string) => {
+    await model.save(`${MODEL_PREFIX}${name}`);
+  };
+
   return (
     <div className="min-h-screen bg-gray-900 flex flex-col items-center py-8">
+      <div className="mb-4 text-white">
+        <label className="block mb-1 text-sm">Selected Model:</label>
+        <div className="flex items-center gap-2">
+          <select
+            className="bg-gray-800 text-white px-2 py-1 rounded"
+            value={selectedModelName ?? ""}
+            onChange={(e) => setSelectedModelName(e.target.value)}
+          >
+            {modelNames.map(name => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={handleCreateModel}
+            className="px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
+          >
+            Create New Model
+          </button>
+        </div>
+      </div>
+
       {/* Model Indicator */}
       {!modelLoaded && (
-        <p className="text-yellow-400 text-lg mb-4">Loading model...</p>
+        <p className="text-yellow-400 text-lg mb-4">Loading Gesture Detector...</p>
       )}
       {modelLoaded && (
-        <p className="text-green-500 text-lg mb-4">Model Ready</p>
+        <p className="text-green-500 text-lg mb-4">Gesture Detector Ready</p>
       )}
 
       {/* Countdown */}
@@ -234,7 +369,7 @@ export default function GestureBox() {
                       }`}
                   >
                     <img
-                      src={frame}
+                      src={frame.image}
                       alt={`Frame ${globalIndex}`}
                       className="w-full rounded"
                     />
@@ -243,7 +378,8 @@ export default function GestureBox() {
                     )}
                   </div>
                 );
-              })}
+              })
+            }
           </div>
           <button
             onClick={() => {
@@ -273,9 +409,40 @@ export default function GestureBox() {
             </span>
             <button
               className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
-              onClick={() => {
+              onClick={async () => {
                 const selectedImages = Array.from(selectedFrames).map(i => recordedFrames[i]);
-                console.log("✅ Selected Frames:", selectedImages);
+                if (selectedImages.length < 10) {
+                  alert("Please select at least 10 frames.");
+                  return;
+                }
+
+                if (!tfModel || !selectedModelName) {
+                  alert("No model is loaded.");
+                  return;
+                }
+
+                const labelStr = prompt("Enter gesture label index (0–9):");
+                if (labelStr === null) return;
+
+                const labelIndex = parseInt(labelStr);
+                if (isNaN(labelIndex) || labelIndex < 0 || labelIndex > 9) {
+                  alert("Invalid label. Please enter a number between 0 and 9.");
+                  return;
+                }
+
+                const { xs, ys } = preprocessFramesForLSTM(selectedImages, 10, labelIndex);
+                await tfModel.fit(xs, ys, {
+                  epochs: 5,
+                  batchSize: 2,
+                  callbacks: {
+                    onEpochEnd: (epoch, logs) => {
+                      console.log(`Epoch ${epoch + 1}`, logs);
+                    },
+                  },
+                });
+
+                await saveModelToIndexedDB(tfModel, selectedModelName);
+                alert("✅ Model trained and saved.");
               }}
             >
               Done
