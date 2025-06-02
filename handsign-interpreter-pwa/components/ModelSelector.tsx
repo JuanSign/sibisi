@@ -29,7 +29,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onModelChange }) => {
         } else {
             onModelChange(null);
         }
-    }, [selectedModelName]);
+    }, [selectedModelName, onModelChange]);
 
     // Create a new model
     const handleCreateModel = async () => {

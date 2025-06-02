@@ -1,10 +1,12 @@
 import { Frame } from "@/lib/Model";
 import React, { useState } from "react";
+import Image from "next/image";
 
 interface FrameSelectorProps {
     recordedFrames: Frame[];
     numToSelect: number;
     onDone: (selected: Frame[]) => void;
+    onCancel?: () => void; // new optional cancel callback
 }
 
 const FRAMES_PER_PAGE = 5;
@@ -13,6 +15,7 @@ export const FrameSelector: React.FC<FrameSelectorProps> = ({
     recordedFrames,
     numToSelect,
     onDone,
+    onCancel,
 }) => {
     const [selectedIndices, setSelectedIndices] = useState<number[]>([]);
     const [page, setPage] = useState(0);
@@ -63,7 +66,7 @@ export const FrameSelector: React.FC<FrameSelectorProps> = ({
             </div>
 
             {/* Thumbnails */}
-            <div className="flex space-x-4 justify-center">
+            <div className="flex  space-x-4 px-2 pb-2 justify-center min-w-full">
                 {visibleFrames.map((frame, index) => {
                     const realIndex = startIndex + index;
                     return (
@@ -75,10 +78,11 @@ export const FrameSelector: React.FC<FrameSelectorProps> = ({
                                 }`}
                             onClick={() => toggleSelection(realIndex)}
                         >
-                            <img
+                            <Image
                                 src={frame.image}
                                 alt={`Frame ${realIndex}`}
-                                className="w-full h-full object-cover"
+                                layout="fill"
+                                objectFit="cover"
                             />
                             <div className="absolute bottom-1 right-1 text-xs bg-white/80 px-1 rounded text-black">
                                 #{realIndex + 1}
@@ -88,8 +92,8 @@ export const FrameSelector: React.FC<FrameSelectorProps> = ({
                 })}
             </div>
 
-            {/* Done button */}
-            <div className="flex justify-center mt-4">
+            {/* Done & Cancel buttons */}
+            <div className="flex justify-center gap-4 mt-4">
                 <button
                     onClick={handleDone}
                     disabled={selectedIndices.length !== numToSelect}
@@ -100,6 +104,14 @@ export const FrameSelector: React.FC<FrameSelectorProps> = ({
                 >
                     Done
                 </button>
+                {onCancel && (
+                    <button
+                        onClick={onCancel}
+                        className="px-4 py-2 rounded bg-red-600 hover:bg-red-700 text-white"
+                    >
+                        Cancel
+                    </button>
+                )}
             </div>
         </div>
     );

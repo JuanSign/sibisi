@@ -11,16 +11,17 @@ type VideoFeedProps = {
     onRecordFinish: (frames: Frame[]) => void;
     onFrame: (frame: Frame) => void;
     record: boolean;
-    showLandmark: boolean
-    showVideo: boolean
+    showLandmark: boolean;
+    showVideo: boolean;
 };
+
 
 export default function VideoFeed({
     onRecordFinish,
     onFrame,
     record,
     showLandmark,
-    showVideo
+    showVideo,
 }: VideoFeedProps) {
     const gestureRecognizerRef = useRef<GestureRecognizer | null>(null);
 
@@ -33,6 +34,7 @@ export default function VideoFeed({
     const showLandmarkRef = useRef(showLandmark);
     const showVideoRef = useRef(showVideo);
 
+    const prevRecordRef = useRef(false);
     const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
     const captureIntervalRef = useRef<NodeJS.Timeout | null>(null);
     const captureTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -154,7 +156,7 @@ export default function VideoFeed({
         };
 
         initializeRecognizer();
-    }, [videoDimensions, onFrame, showLandmark]);
+    }, [videoDimensions, onFrame]);
 
     const beginCapture = useCallback(() => {
         const captureInterval = 100; // ms
@@ -219,11 +221,14 @@ export default function VideoFeed({
     }, [beginCapture]);
 
     useEffect(() => {
-        if (record) {
-            startRecording();
-        } else {
-            abortRecording();
+        if (record != prevRecordRef.current) {
+            if (record) {
+                startRecording();
+            } else {
+                abortRecording();
+            }
         }
+        prevRecordRef.current = record;
     }, [record, startRecording, abortRecording]);
 
     return (
