@@ -5,6 +5,14 @@ export type Frame = {
 };
 export type Sample = Frame[];
 
+export interface ModelJSON {
+    name: string;
+    numberOfFrames: number;
+    labels: string[];
+    averages: Record<string, Landmark[][]>; // label -> frames -> landmarks -> [x,y,z]
+    counts: Record<string, number>;
+}
+
 export class Model {
     name: string
     numberOfFrames: number;
@@ -127,7 +135,7 @@ export class Model {
         };
     }
 
-    static fromJSON(json: any): Model {
+    static fromJSON(json: ModelJSON): Model {
         const model = new Model(json.name, json.numberOfFrames);
         model.labels = json.labels;
         model.averages = json.averages;

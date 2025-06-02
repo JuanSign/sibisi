@@ -21,7 +21,6 @@ export async function saveModel(name: string, model: Model): Promise<void> {
     console.log("Saved");
 }
 
-
 export async function loadModel(name: string): Promise<Model | null> {
     const db = await getDB();
     const raw = await db.get(STORE_NAME, name);
